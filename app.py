@@ -1,64 +1,85 @@
-from flask import Flask, jsonify
+from flask import Flask, render_template_string
 import requests
+import datetime
 
 app = Flask(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-    "Accept": "application/json",
-    "Referer": "https://www.espn.com/"
-}
+NBA_URL = "https://www.balldontlie.io/api/v1/games"
+CBB_URL = "https://api.collegebasketballdata.com/games"
 
-def fetch_espn(scoreboard_url):
-    try:
-        response = requests.get(scoreboard_url, headers=HEADERS, timeout=10)
-        response.raise_for_status()  # throws error if not 200
-        data = response.json()
+HTML = '''
+<!DOCTYPE html>
+<html>
+<head>
+<title>Scores</title>
+<meta http-equiv="refresh" content="30">
+<style>
+body { font-family: Arial; font-size: 14px; }
+.section { margin-bottom: 20px; }
+h2 { font-size: 18px; }
+</style>
+</head>
+<body>
+<h1>Today's Games</h1>
 
-        games = []
+<div class="section">
+<h2>NBA</h2>
+{{ nba|safe }}
+</div>
 
-        # ESPN scoreboard uses "events"
-        for event in data.get("events", []):
-            competition = event.get("competitions", [{}])[0]
+<div class="section">
+<h2>CBB</h2>
+{{ cbb|safe }}
+</div>
 
-            # competitors = teams in the game
-            competitors = competition.get("competitors", [])
+</body>
+</html>
+'''
 
-            if len(competitors) == 2:
-                team1 = competitors[0]
-                team2 = competitors[1]
+def get_nba():
+    today = datetime.date.today().isoformat()
+    r = requests.get(NBA_URL, params={"dates[]": today, "per_page": 100})
+    if r.status_code != 200:
+        return "Error loading NBA games"
 
-                games.append({
-                    "home": team1["team"]["displayName"],
-                    "home_score": team1.get("score"),
-                    "away": team2["team"]["displayName"],
-                    "away_score": team2.get("score"),
-                    "status": event.get("status", {}).get("type", {}).get("shortDetail")
-                })
+    games = r.json().get("data", [])
+    if not games:
+        return "No games today"
 
-        return games
+    out = ""
+    for g in games:
+        home = g['home_team']['abbreviation']
+        away = g['visitor_team']['abbreviation']
+        hs = g['home_team_score']
+        vs = g['visitor_team_score']
+        status = g['status']
+        out += f"{away} {vs} @ {home} {hs} — {status}<br>"
+    return out
 
-    except Exception as e:
-        print("Fetch error:", e)
-        return []
+def get_cbb():
+    today = datetime.date.today().isoformat()
+    headers = {"accept": "application/json"}
+    r = requests.get(CBB_URL, params={"date": today}, headers=headers)
 
-@app.route("/nba")
-def nba_games():
-    url = "https://site.api.espn.com/apis/v2/sports/basketball/nba/scoreboard"
-    games = fetch_espn(url)
-    return jsonify({"games": games})
+    if r.status_code != 200:
+        return "Error loading CBB games"
 
-@app.route("/cbb")
-def cbb_games():
-    url = "https://site.api.espn.com/apis/v2/sports/basketball/mens-college-basketball/scoreboard"
-    games = fetch_espn(url)
-    return jsonify({"games": games})
+    games = r.json()
+    if not games:
+        return "No CBB games today"
+
+    out = ""
+    for g in games:
+        home = g['home']['market']
+        away = g['away']['market']
+        hs = g.get('home_points', '')
+        vs = g.get('away_points', '')
+        out += f"{away} {vs} @ {home} {hs}<br>"
+    return out
 
 @app.route("/")
 def home():
-    return jsonify({"status": "API is running"})
+    return render_template_string(HTML, nba=get_nba(), cbb=get_cbb())
 
-
-# Needed for Render
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=10000)
